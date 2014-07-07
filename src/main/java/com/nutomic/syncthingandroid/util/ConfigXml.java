@@ -1,15 +1,29 @@
 package com.nutomic.syncthingandroid.util;
 
+import android.content.Context;
 import android.os.Environment;
 import android.util.Log;
 
+import org.apache.http.conn.ssl.SSLSocketFactory;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.jce.X509Principal;
+import org.bouncycastle.x509.X509V3CertificateGenerator;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.math.BigInteger;
+import java.security.KeyFactory;
+import java.security.KeyStore;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Date;
 import java.util.Random;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -49,7 +63,9 @@ public class ConfigXml {
 	}
 
 	public String getWebGuiUrl() {
-		return "http://" + getGuiElement().getElementsByTagName("address").item(0).getTextContent();
+		boolean tlsEnabled = Boolean.parseBoolean(getGuiElement().getAttribute("tls"));
+		return ((tlsEnabled) ? "https://" : "http://") +
+				getGuiElement().getElementsByTagName("address").item(0).getTextContent();
 	}
 
 	public String getApiKey() {
@@ -159,6 +175,42 @@ public class ConfigXml {
 		}
 		catch (TransformerException e) {
 			Log.w(TAG, "Failed to save updated config", e);
+		}
+	}
+
+	public SSLSocketFactory createAdditionalCertsSSLSocketFactory(Context context) {
+		try {
+			X509V3CertificateGenerator v3CertGen = new X509V3CertificateGenerator();
+			v3CertGen.setSerialNumber(BigInteger.valueOf(new SecureRandom().nextInt()));
+			v3CertGen.setIssuerDN(new X509Principal("CN=syncthing, OU=None, O=None L=None, C=None"));
+			v3CertGen.setNotBefore(new Date(System.currentTimeMillis() - 1000L * 60 * 60 * 24 * 30));
+			v3CertGen.setNotAfter(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 365*10)));
+			v3CertGen.setSubjectDN(new X509Principal("CN=syncthing, OU=None, O=None L=None, C=None"));
+
+			X509EncodedKeySpec spec =
+					new X509EncodedKeySpec(keyBytes);
+			KeyFactory kf = KeyFactory.getInstance("RSA");
+
+			v3CertGen.setPublicKey(kf.generatePublic(spec));
+			v3CertGen.setSignatureAlgorithm("MD5WithRSAEncryption");
+			
+			X509Certificate PKCertificate = v3CertGen.generateX509Certificate(KPair.getPrivate());
+
+			KeyStore ks = KeyStore.getInstance("BKS");
+
+			// the bks file we generated above
+			FileInputStream fis =
+					new FileInputStream(new File(context.getFilesDir(), "https-cert.pem"));
+			try {
+				ks.load(fis, null);
+			} finally {
+				fis.close();
+			}
+
+			return new SslSocketFactory(ks);
+
+		} catch(Exception e) {
+			throw new RuntimeException(e);
 		}
 	}
 

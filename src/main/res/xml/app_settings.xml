@@ -75,8 +75,7 @@
 
 		<CheckBoxPreference
 				android:key="UseTLS"
-				android:title="Use HTTPS for GUI"
-				android:enabled="false" />
+				android:title="Use HTTPS for GUI" />
 
 	</PreferenceScreen>
 

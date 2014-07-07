@@ -17,13 +17,21 @@ import android.view.WindowManager;
 import com.nutomic.syncthingandroid.R;
 import com.nutomic.syncthingandroid.gui.MainActivity;
 import com.nutomic.syncthingandroid.util.ConfigXml;
+import com.nutomic.syncthingandroid.util.SslSocketFactory;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpHead;
+import org.apache.http.conn.ClientConnectionManager;
+import org.apache.http.conn.ClientConnectionManagerFactory;
 import org.apache.http.conn.HttpHostConnectException;
+import org.apache.http.conn.scheme.Scheme;
+import org.apache.http.conn.scheme.SchemeRegistry;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.conn.SingleClientConnManager;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpParams;
 
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
@@ -34,6 +42,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.ref.WeakReference;
+import java.security.KeyManagementException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
@@ -109,6 +121,8 @@ public class SyncthingService extends Service {
 
 	private final HashSet<WeakReference<OnApiChangeListener>> mOnApiAvailableListeners =
 			new HashSet<WeakReference<OnApiChangeListener>>();
+
+	private ConfigXml mConfigXml;
 
 	@Override
 	public int onStartCommand(Intent intent, int flags, int startId) {
@@ -232,8 +246,14 @@ public class SyncthingService extends Service {
 		@Override
 		protected Void doInBackground(Void... voids) {
 			int status = 0;
-			HttpClient httpclient = new DefaultHttpClient();
+			final HttpParams params = new BasicHttpParams();
+
+			final SchemeRegistry schemeRegistry = new SchemeRegistry();
+			schemeRegistry.register(new Scheme("https", mConfigXml.createAdditionalCertsSSLSocketFactory(SyncthingService.this), 443));
 			HttpHead head = new HttpHead(mApi.getUrl());
+			SingleClientConnManager cm = new SingleClientConnManager(head.getParams(),
+					schemeRegistry);
+			HttpClient httpclient = new DefaultHttpClient(cm, head.getParams());
 			do {
 				try {
 					Thread.sleep(WEB_GUI_POLL_INTERVAL);
@@ -339,12 +359,12 @@ public class SyncthingService extends Service {
 			}
 
 			moveConfigFiles();
-			ConfigXml config = new ConfigXml(getConfigFile());
+			mConfigXml = new ConfigXml(getConfigFile());
 			if (isFirstStart()) {
-				config.createCameraRepo();
+				mConfigXml.createCameraRepo();
 			}
-			config.update();
-			return new Pair<String, String>(config.getWebGuiUrl(), config.getApiKey());
+			mConfigXml.update();
+			return new Pair<String, String>(mConfigXml.getWebGuiUrl(), mConfigXml.getApiKey());
 		}
 
 		@Override
