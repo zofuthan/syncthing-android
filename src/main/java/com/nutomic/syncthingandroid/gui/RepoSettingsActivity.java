@@ -5,19 +5,25 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ComponentName;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.storage.StorageManager;
 import android.preference.CheckBoxPreference;
 import android.preference.EditTextPreference;
 import android.preference.Preference;
 import android.preference.PreferenceActivity;
 import android.preference.PreferenceScreen;
+import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.Toast;
@@ -28,7 +34,9 @@ import com.nutomic.syncthingandroid.syncthing.SyncthingService;
 import com.nutomic.syncthingandroid.syncthing.SyncthingServiceBinder;
 import com.nutomic.syncthingandroid.util.ExtendedCheckBoxPreference;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -279,15 +287,22 @@ public class RepoSettingsActivity extends PreferenceActivity
 	@Override
 	public boolean onPreferenceClick(Preference preference) {
 		if (preference.equals(mDirectory)) {
-			Intent intent = new Intent(this, FolderPickerActivity.class)
-					.putExtra(FolderPickerActivity.EXTRA_INITIAL_DIRECTORY,
-							(mRepo.Directory.length() != 0)
-									? mRepo.Directory
-									: Environment.getExternalStorageDirectory().getAbsolutePath());
+			Intent intent;
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+				intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+			}
+			else {
+				intent = new Intent(Intent.ACTION_GET_CONTENT);
+			}
+			intent.addCategory(Intent.CATEGORY_OPENABLE)
+					.setType(DocumentsContract.Document.MIME_TYPE_DIR)
+					.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
 			startActivityForResult(intent, DIRECTORY_REQUEST_CODE);
+			return true;
 		}
 		else if (preference.equals(mNodes) && mSyncthingService.getApi().getNodes().isEmpty()) {
 			Toast.makeText(this, R.string.no_nodes, Toast.LENGTH_SHORT).show();
+			return true;
 		}
 		else if (preference.equals(mDelete)) {
 			new AlertDialog.Builder(this)
@@ -308,10 +323,20 @@ public class RepoSettingsActivity extends PreferenceActivity
 
 	@Override
 	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-		if (resultCode == Activity.RESULT_OK && requestCode == DIRECTORY_REQUEST_CODE) {
-			mRepo.Directory = data.getStringExtra(FolderPickerActivity.EXTRA_RESULT_DIRECTORY);
+		if (requestCode == DIRECTORY_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+			Uri uri = data.getData();
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+				getContentResolver().takePersistableUriPermission(uri, data.getFlags()
+						& (Intent.FLAG_GRANT_READ_URI_PERMISSION
+						| Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+				//mRepo.Directory = getPath(uri);
+				mRepo.Directory = uri.toString();
+			}
+			else {
+				// TODO: properly get path (content:// URI)
+				mRepo.Directory = uri.getPath();
+			}
 			mDirectory.setSummary(mRepo.Directory);
-			repoUpdated();
 		}
 	}
 
@@ -319,6 +344,143 @@ public class RepoSettingsActivity extends PreferenceActivity
 		if (getIntent().getAction().equals(ACTION_EDIT)) {
 			mSyncthingService.getApi().editRepo(mRepo, false, this);
 		}
+	}
+
+	/**
+	 * Get a file path from a Uri. This will get the the path for Storage Access
+	 * Framework Documents, as well as the _data field for the MediaStore and
+	 * other file-based ContentProviders.<br>
+	 * <br>
+	 * Callers should check whether the path is local before assuming it
+	 * represents a local file.
+	 *
+	 * @param uri The Uri to query.
+	 * @author paulburke
+	 */
+	@TargetApi(19)
+	public String getPath(final Uri uri) {
+
+		// DocumentProvider
+		if (DocumentsContract.isDocumentUri(this, uri)) {
+			// ExternalStorageProvider
+			if (isExternalStorageDocument(uri)) {
+				final String docId = DocumentsContract.getDocumentId(uri);
+				final String[] split = docId.split(":");
+
+				if ("primary".equalsIgnoreCase(split[0])) {
+					return Environment.getExternalStorageDirectory() + "/" + split[1];
+				}
+
+				// TODO handle non-primary volumes
+			}
+			// DownloadsProvider
+			else if (isDownloadsDocument(uri)) {
+
+				final String id = DocumentsContract.getDocumentId(uri);
+				final Uri contentUri = ContentUris.withAppendedId(
+						Uri.parse("content://downloads/public_downloads"), Long.valueOf(id));
+
+				return getDataColumn(contentUri, null, null);
+			}
+			// MediaProvider
+			else if (isMediaDocument(uri)) {
+				final String docId = DocumentsContract.getDocumentId(uri);
+				final String[] split = docId.split(":");
+				final String type = split[0];
+
+				Uri contentUri = null;
+				if ("image".equals(type)) {
+					contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+				} else if ("video".equals(type)) {
+					contentUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+				} else if ("audio".equals(type)) {
+					contentUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+				}
+
+				final String selection = "_id=?";
+				final String[] selectionArgs = new String[] {
+						split[1]
+				};
+
+				return getDataColumn(contentUri, selection, selectionArgs);
+			}
+		}
+		// MediaStore (and general)
+		else if ("content".equalsIgnoreCase(uri.getScheme())) {
+
+			// Return the remote address
+			if (isGooglePhotosUri(uri))
+				return uri.getLastPathSegment();
+
+			return getDataColumn(uri, null, null);
+		}
+		// File
+		else if ("file".equalsIgnoreCase(uri.getScheme())) {
+			return uri.getPath();
+		}
+
+		return null;
+	}
+
+	/**
+	 * @param uri The Uri to check.
+	 * @return Whether the Uri authority is ExternalStorageProvider.
+	 * @author paulburke
+	 */
+	public static boolean isExternalStorageDocument(Uri uri) {
+		return "com.android.externalstorage.documents".equals(uri.getAuthority());
+	}
+
+	/**
+	 * @param uri The Uri to check.
+	 * @return Whether the Uri authority is DownloadsProvider.
+	 * @author paulburke
+	 */
+	public static boolean isDownloadsDocument(Uri uri) {
+		return "com.android.providers.downloads.documents".equals(uri.getAuthority());
+	}
+
+	/**
+	 * @param uri The Uri to check.
+	 * @return Whether the Uri authority is MediaProvider.
+	 * @author paulburke
+	 */
+	public static boolean isMediaDocument(Uri uri) {
+		return "com.android.providers.media.documents".equals(uri.getAuthority());
+	}
+
+	/**
+	 * @param uri The Uri to check.
+	 * @return Whether the Uri authority is Google Photos.
+	 */
+	public static boolean isGooglePhotosUri(Uri uri) {
+		return "com.google.android.apps.photos.content".equals(uri.getAuthority());
+	}/**
+	 * Get the value of the data column for this Uri. This is useful for
+	 * MediaStore Uris, and other file-based ContentProviders.
+	 *
+	 * @param uri The Uri to query.
+	 * @param selection (Optional) Filter used in the query.
+	 * @param selectionArgs (Optional) Selection arguments used in the query.
+	 * @return The value of the _data column, which is typically a file path.
+	 * @author paulburke
+	 */
+	public String getDataColumn(Uri uri, String selection,
+									   String[] selectionArgs) {
+		Cursor cursor = null;
+
+		try {
+			cursor = getContentResolver().query(uri, new String[]{"_data"}, selection, selectionArgs,
+					null);
+			if (cursor != null && cursor.moveToFirst()) {
+				final int column_index = cursor.getColumnIndexOrThrow("_data");
+				return cursor.getString(column_index);
+			}
+		} finally {
+			if (cursor != null)
+				cursor.close();
+		}
+		return null;
 	}
 
 }

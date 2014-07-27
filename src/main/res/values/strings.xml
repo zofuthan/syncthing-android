@@ -200,21 +200,6 @@ Please report any problems you encounter.</string>
 	<!-- Title of the preference showing upstream version name -->
 	<string name="syncthing_version_title">Syncthing Version</string>
 
-	<!-- FolderPickerAcitivity -->
-
-
-	<!-- Activity title -->
-	<string name="folder_picker_title">Folder Picker</string>
-
-	<!-- ListView empty text -->
-	<string name="directory_empty">Directory is Empty</string>
-
-	<!-- Menu item to create folder -->
-	<string name="create_folder">Create new Folder</string>
-
-	<!-- Menu item to select the current folder -->
-	<string name="select_folder">Select Folder</string>
-
 	<!-- SyncthingService -->
 
 

@@ -50,13 +50,6 @@
 				android:name=".gui.RepoSettingsActivity" />
 		<activity
 				android:name=".gui.NodeSettingsActivity" />
-		<activity
-				android:name=".gui.FolderPickerActivity"
-				android:label="@string/folder_picker_title" >
-			<meta-data
-					android:name="android.support.UI_OPTIONS"
-					android:value="splitActionBarWhenNarrow" />
-		</activity>
 	</application>
 
 </manifest>
